@@ -5,52 +5,52 @@ import random
 from dataclasses import dataclass
 from typing import Dict, List
 
-from .data_models import ПланВыполнения, ПлановаяОперация
+from .data_models import ExecutionPlan, ScheduledOperation
 
 
 @dataclass
-class РезультатСимуляции:
+class SimulationResult:
     """Метрики работы производственной программы."""
 
-    общая_стоимость: float
-    средний_риск: float
-    средняя_скорость: float
-    коэффициент_загрузки: Dict[str, float]
+    total_cost: float
+    mean_risk: float
+    mean_speed: float
+    utilization: Dict[str, float]
 
 
-class ИмитационнаяМодель:
+class SimulationModel:
     """Простая модель, оценивающая отклонения от плана."""
 
-    def __init__(self, план: ПланВыполнения) -> None:
-        self.план = план
+    def __init__(self, plan: ExecutionPlan) -> None:
+        self.plan = plan
 
-    def _имитировать_отклонения(self, операция: ПлановаяОперация) -> float:
+    def _simulate_deviation(self, operation: ScheduledOperation) -> float:
         """Имитация сбоев с учётом риска."""
-        шум = random.uniform(-0.15, 0.25)
-        return max(0.0, 1.0 + шум * операция.задача.риск)
+        noise = random.uniform(-0.15, 0.25)
+        return max(0.0, 1.0 + noise * operation.task.risk)
 
-    def выполнить(self) -> РезультатСимуляции:
-        потери_скорости: List[float] = []
-        риски: List[float] = []
-        общая_стоимость = 0.0
+    def run(self) -> SimulationResult:
+        speed_losses: List[float] = []
+        risks: List[float] = []
+        total_cost = 0.0
 
-        загрузка = self.план.суммарная_нагрузка()
-        максимум_нагрузки = max(загрузка.values()) if загрузка else 1
-        коэффициент_загрузки = {ключ: значение / максимум_нагрузки for ключ, значение in загрузка.items()}
+        load = self.plan.total_load()
+        max_load = max(load.values()) if load else 1
+        utilization = {key: value / max_load for key, value in load.items()}
 
-        for операция in self.план.операции:
-            отклонение = self._имитировать_отклонения(операция)
-            показатели = операция.вычислить_показатели()
-            общая_стоимость += показатели["стоимость"] * отклонение
-            потери_скорости.append(отклонение)
-            риски.append(показатели["риск_процент"])
+        for operation in self.plan.operations:
+            deviation = self._simulate_deviation(operation)
+            metrics = operation.compute_metrics()
+            total_cost += metrics["cost"] * deviation
+            speed_losses.append(deviation)
+            risks.append(metrics["risk_percent"])
 
-        средний_риск = sum(риски) / len(риски) if риски else 0.0
-        средняя_скорость = sum(потери_скорости) / len(потери_скорости) if потери_скорости else 1.0
+        mean_risk = sum(risks) / len(risks) if risks else 0.0
+        mean_speed = sum(speed_losses) / len(speed_losses) if speed_losses else 1.0
 
-        return РезультатСимуляции(
-            общая_стоимость=общая_стоимость,
-            средний_риск=средний_риск,
-            средняя_скорость=средняя_скорость,
-            коэффициент_загрузки=коэффициент_загрузки,
+        return SimulationResult(
+            total_cost=total_cost,
+            mean_risk=mean_risk,
+            mean_speed=mean_speed,
+            utilization=utilization,
         )

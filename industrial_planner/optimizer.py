@@ -4,80 +4,80 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 
-from .data_models import ПланВыполнения, ПлановаяОперация, Resource, Заказ, Задача
+from .data_models import ExecutionPlan, Order, Resource, ScheduledOperation, Task
 
 
-class КонфликтРесурсов(Exception):
+class ResourceConflict(Exception):
     """Ошибка, показывающая невозможность разместить задачу."""
 
 
-class Планировщик:
+class Scheduler:
     """Простой эвристический планировщик с возможностью тонкой настройки."""
 
-    def __init__(self, ресурсы: Dict[str, Resource], вес_стоимости: float = 0.4, вес_риска: float = 0.2) -> None:
-        self.ресурсы = ресурсы
-        self.вес_стоимости = вес_стоимости
-        self.вес_риска = вес_риска
+    def __init__(self, resources: Dict[str, Resource], cost_weight: float = 0.4, risk_weight: float = 0.2) -> None:
+        self.resources = resources
+        self.cost_weight = cost_weight
+        self.risk_weight = risk_weight
 
-    def _найти_доступные_ресурсы(self, требуемые: Dict[str, int]) -> Dict[str, List[Resource]]:
-        выделенные: Dict[str, List[Resource]] = {}
-        for тип, количество in требуемые.items():
-            подходящие = [р for р in self.ресурсы.values() if р.тип == тип]
-            подходящие.sort(key=lambda р: р.стоимость_в_час)
-            if len(подходящие) < количество:
-                raise КонфликтРесурсов(f"Недостаточно ресурсов типа {тип}")
-            выделенные[тип] = подходящие[:количество]
-        return выделенные
+    def _allocate_resources(self, required: Dict[str, int]) -> Dict[str, List[Resource]]:
+        allocated: Dict[str, List[Resource]] = {}
+        for category, quantity in required.items():
+            suitable = [res for res in self.resources.values() if res.category == category]
+            suitable.sort(key=lambda res: res.hourly_cost)
+            if len(suitable) < quantity:
+                raise ResourceConflict(f"Недостаточно ресурсов типа {category}")
+            allocated[category] = suitable[:quantity]
+        return allocated
 
-    def _найти_окно(self, начало: datetime, длительность: timedelta, выделенные: Dict[str, List[Resource]]) -> Tuple[datetime, datetime]:
-        актуальное_начало = начало
-        конец = начало + длительность
+    def _find_window(self, start: datetime, duration: timedelta, allocated: Dict[str, List[Resource]]) -> Tuple[datetime, datetime]:
+        current_start = start
+        end = start + duration
         while True:
-            if all(ресурс.свободен_в_интервале(актуальное_начало, актуальное_начало + длительность) for ресурсы in выделенные.values() for ресурс in ресурсы):
-                конец = актуальное_начало + длительность
+            if all(resource.is_available(current_start, current_start + duration) for resources in allocated.values() for resource in resources):
+                end = current_start + duration
                 break
-            актуальное_начало += timedelta(minutes=30)
-        return актуальное_начало, конец
+            current_start += timedelta(minutes=30)
+        return current_start, end
 
-    def _забронировать(self, выделенные: Dict[str, List[Resource]], начало: datetime, конец: datetime) -> None:
-        for ресурсы in выделенные.values():
-            for ресурс in ресурсы:
-                ресурс.забронировать(начало, конец)
+    def _book_resources(self, allocated: Dict[str, List[Resource]], start: datetime, end: datetime) -> None:
+        for resources in allocated.values():
+            for resource in resources:
+                resource.book(start, end)
 
-    def _рассчитать_вес(self, заказ: Заказ, задача: Задача) -> float:
-        важность_заказа = заказ.базовый_приоритет()
-        стоимость = задача.оценить_стоимость(self.ресурсы)
-        риск = задача.риск
-        return важность_заказа * задача.приоритет - self.вес_стоимости * стоимость - self.вес_риска * риск
+    def _score(self, order: Order, task: Task) -> float:
+        importance = order.base_priority()
+        cost = task.estimate_cost(self.resources)
+        risk = task.risk
+        return importance * task.priority - self.cost_weight * cost - self.risk_weight * risk
 
-    def построить_план(self, заказы: List[Заказ]) -> ПланВыполнения:
-        текущий_момент = datetime.now()
-        операции: List[ПлановаяОперация] = []
-        задачи_для_планирования: List[tuple[Заказ, Задача]] = []
+    def build_plan(self, orders: List[Order]) -> ExecutionPlan:
+        current_time = datetime.now()
+        operations: List[ScheduledOperation] = []
+        task_queue: List[tuple[Order, Task]] = []
 
-        for заказ in заказы:
-            for задача in заказ.задачи:
-                задачи_для_планирования.append((заказ, задача))
+        for order in orders:
+            for task in order.tasks:
+                task_queue.append((order, task))
 
-        задачи_для_планирования.sort(key=lambda пар: self._рассчитать_вес(пар[0], пар[1]), reverse=True)
+        task_queue.sort(key=lambda pair: self._score(pair[0], pair[1]), reverse=True)
 
-        завершённые: Dict[str, datetime] = {}
-        for заказ, задача in задачи_для_планирования:
-            стартовая_точка = завершённые.get(задача.предыдущая, текущий_момент)
-            выделенные = self._найти_доступные_ресурсы(задача.требуемые_ресурсы)
-            начало, конец = self._найти_окно(стартовая_точка, задача.длительность, выделенные)
-            self._забронировать(выделенные, начало, конец)
-            завершённые[задача.идентификатор] = конец
-            операции.append(
-                ПлановаяОперация(
-                    задача=задача,
-                    заказ=заказ,
-                    начало=начало,
-                    окончание=конец,
-                    выделенные_ресурсы=выделенные,
+        finished: Dict[str, datetime] = {}
+        for order, task in task_queue:
+            start_point = finished.get(task.previous, current_time)
+            allocated = self._allocate_resources(task.required_resources)
+            start, end = self._find_window(start_point, task.duration, allocated)
+            self._book_resources(allocated, start, end)
+            finished[task.identifier] = end
+            operations.append(
+                ScheduledOperation(
+                    task=task,
+                    order=order,
+                    start=start,
+                    end=end,
+                    allocated_resources=allocated,
                 )
             )
 
-        план = ПланВыполнения(операции)
-        план.отсортировать()
-        return план
+        plan = ExecutionPlan(operations)
+        plan.sort()
+        return plan

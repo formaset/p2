@@ -4,13 +4,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .data_repository import РепозиторийДанных
-from .optimizer import Планировщик
-from .reporting import ГенераторОтчётов
-from .simulation import ИмитационнаяМодель
+from .data_repository import DataRepository
+from .optimizer import Scheduler
+from .reporting import ReportGenerator
+from .simulation import SimulationModel
 
 
-def построить_парсер() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Система интеллектуального оперативного планирования производственных процессов",
     )
@@ -36,19 +36,19 @@ def построить_парсер() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = построить_парсер().parse_args()
+    args = build_parser().parse_args()
 
-    репозиторий = РепозиторийДанных()
-    планировщик = Планировщик(репозиторий.ресурсы(), вес_стоимости=args.вес_стоимости, вес_риска=args.вес_риска)
-    план = планировщик.построить_план(репозиторий.заказы())
+    repository = DataRepository()
+    scheduler = Scheduler(repository.resources(), cost_weight=args.вес_стоимости, risk_weight=args.вес_риска)
+    plan = scheduler.build_plan(repository.orders())
 
-    модель = ИмитационнаяМодель(план)
-    симуляция = модель.выполнить()
+    model = SimulationModel(plan)
+    simulation = model.run()
 
-    генератор = ГенераторОтчётов(план, симуляция)
-    отчёт = генератор.подготовить_краткий()
+    generator = ReportGenerator(plan, simulation)
+    report = generator.build_summary()
 
-    args.отчёт.write_text(отчёт, encoding="utf-8")
+    args.отчёт.write_text(report, encoding="utf-8")
     print("Отчёт сформирован:", args.отчёт)
 
 

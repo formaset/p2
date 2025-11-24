@@ -10,121 +10,116 @@ from typing import Dict, List, Optional
 class Resource:
     """Оборудование или персонал для выполнения операций."""
 
-    идентификатор: str
-    название: str
-    тип: str
-    мощность: float
-    стоимость_в_час: float
-    сменность: int = 1
-    расписание_занятости: List[tuple[datetime, datetime]] = field(default_factory=list)
+    identifier: str
+    name: str
+    category: str
+    capacity: float
+    hourly_cost: float
+    shifts: int = 1
+    booking_schedule: List[tuple[datetime, datetime]] = field(default_factory=list)
 
-    def свободен_в_интервале(self, начало: datetime, конец: datetime) -> bool:
-        """Проверяет, есть ли доступность ресурса в указанном интервале."""
-        for интервал in self.расписание_занятости:
-            занято_с, занято_до = интервал
-            if not (конец <= занято_с or начало >= занято_до):
+    def is_available(self, start: datetime, end: datetime) -> bool:
+        """Проверяет доступность ресурса в указанном интервале."""
+        for interval_start, interval_end in self.booking_schedule:
+            if not (end <= interval_start or start >= interval_end):
                 return False
         return True
 
-    def забронировать(self, начало: datetime, конец: datetime) -> None:
+    def book(self, start: datetime, end: datetime) -> None:
         """Бронирует ресурс, фиксируя интервал выполнения задачи."""
-        self.расписание_занятости.append((начало, конец))
+        self.booking_schedule.append((start, end))
 
-    def текущая_нагрузка(self) -> float:
+    def current_load(self) -> float:
         """Возвращает текущую суммарную длительность бронирований в часах."""
-        if not self.расписание_занятости:
+        if not self.booking_schedule:
             return 0.0
-        продолжительность = sum(
-            (окончание - старт).total_seconds() / 3600 for старт, окончание in self.расписание_занятости
-        )
-        return продолжительность
+        duration = sum((finish - begin).total_seconds() / 3600 for begin, finish in self.booking_schedule)
+        return duration
 
 
 @dataclass
-class Задача:
+class Task:
     """Задача технологического маршрута."""
 
-    идентификатор: str
-    название: str
-    длительность: timedelta
-    требуемые_ресурсы: Dict[str, int]
-    приоритет: int = 1
-    риск: float = 0.1
-    предыдущая: Optional[str] = None
+    identifier: str
+    name: str
+    duration: timedelta
+    required_resources: Dict[str, int]
+    priority: int = 1
+    risk: float = 0.1
+    previous: Optional[str] = None
 
-    def оценить_стоимость(self, ресурсы: Dict[str, Resource]) -> float:
+    def estimate_cost(self, resources: Dict[str, Resource]) -> float:
         """Приблизительный расчёт стоимости операции."""
-        итог = 0.0
-        for тип_ресурса, количество in self.требуемые_ресурсы.items():
-            совпадения = [р for р in ресурсы.values() if р.тип == тип_ресурса]
-            if not совпадения:
+        total = 0.0
+        for resource_type, quantity in self.required_resources.items():
+            matching = [res for res in resources.values() if res.category == resource_type]
+            if not matching:
                 continue
-            средняя_стоимость = sum(р.стоимость_в_час for р in совпадения) / len(совпадения)
-            итог += средняя_стоимость * количество * (self.длительность.total_seconds() / 3600)
-        return итог
+            avg_cost = sum(res.hourly_cost for res in matching) / len(matching)
+            total += avg_cost * quantity * (self.duration.total_seconds() / 3600)
+        return total
 
 
 @dataclass
-class Заказ:
+class Order:
     """Заказ клиента, включающий последовательность задач."""
 
-    идентификатор: str
-    клиент: str
-    дедлайн: datetime
-    задачи: List[Задача]
-    штраф_за_опоздание: float = 0.0
+    identifier: str
+    customer: str
+    deadline: datetime
+    tasks: List[Task]
+    late_penalty: float = 0.0
 
-    def базовый_приоритет(self) -> int:
+    def base_priority(self) -> int:
         """Расчёт статического приоритета заказа."""
-        срочность = max(1, int((self.дедлайн - datetime.now()).total_seconds() // 3600))
-        return max(1, self.штраф_за_опоздание + len(self.задачи) + срочность)
+        urgency = max(1, int((self.deadline - datetime.now()).total_seconds() // 3600))
+        return max(1, int(self.late_penalty) + len(self.tasks) + urgency)
 
 
 @dataclass
-class ПлановаяОперация:
+class ScheduledOperation:
     """Плановая операция с привязкой ко времени и ресурсам."""
 
-    задача: Задача
-    заказ: Заказ
-    начало: datetime
-    окончание: datetime
-    выделенные_ресурсы: Dict[str, List[Resource]]
+    task: Task
+    order: Order
+    start: datetime
+    end: datetime
+    allocated_resources: Dict[str, List[Resource]]
 
-    def вычислить_показатели(self) -> Dict[str, float]:
+    def compute_metrics(self) -> Dict[str, float]:
         """Вычисляет KPI операции."""
-        время_работы = (self.окончание - self.начало).total_seconds() / 3600
-        суммарная_стоимость = self.задача.оценить_стоимость(
-            {р.идентификатор: р for ресурсы in self.выделенные_ресурсы.values() for р in ресурсы}
-        )
-        риск = self.задача.риск * 100
+        work_time = (self.end - self.start).total_seconds() / 3600
+        total_cost = self.task.estimate_cost({res.identifier: res for resources in self.allocated_resources.values() for res in resources})
+        risk = self.task.risk * 100
         return {
-            "время_работы_ч": время_работы,
-            "стоимость": суммарная_стоимость,
-            "риск_процент": риск,
+            "work_hours": work_time,
+            "cost": total_cost,
+            "risk_percent": risk,
         }
 
 
 @dataclass
-class ПланВыполнения:
+class ExecutionPlan:
     """Итоговый план с набором операций."""
 
-    операции: List[ПлановаяОперация]
+    operations: List[ScheduledOperation]
 
-    def отсортировать(self) -> None:
+    def sort(self) -> None:
         """Стабилизирует порядок операций по возрастанию времени начала."""
-        self.операции.sort(key=lambda оп: оп.начало)
+        self.operations.sort(key=lambda op: op.start)
 
-    def найти_по_заказу(self, идентификатор: str) -> List[ПлановаяОперация]:
-        return [оп for оп in self.операции if оп.заказ.идентификатор == идентификатор]
+    def find_by_order(self, identifier: str) -> List[ScheduledOperation]:
+        return [op for op in self.operations if op.order.identifier == identifier]
 
-    def суммарная_стоимость(self) -> float:
-        return sum(оп.вычислить_показатели()["стоимость"] for оп in self.операции)
+    def total_cost(self) -> float:
+        return sum(op.compute_metrics()["cost"] for op in self.operations)
 
-    def суммарная_нагрузка(self) -> Dict[str, float]:
-        загрузка: Dict[str, float] = {}
-        for оп in self.операции:
-            for ресурсы in оп.выделенные_ресурсы.values():
-                for ресурс in ресурсы:
-                    загрузка.setdefault(ресурс.название, 0.0)
-                    загрузка[ресурс.название] += (оп.окончание - оп.начало).total_seconds() / 3600
-        return загрузка
+    def total_load(self) -> Dict[str, float]:
+        load: Dict[str, float] = {}
+        for operation in self.operations:
+            for resources in operation.allocated_resources.values():
+                for resource in resources:
+                    load.setdefault(resource.name, 0.0)
+                    load[resource.name] += (operation.end - operation.start).total_seconds() / 3600
+        return load
